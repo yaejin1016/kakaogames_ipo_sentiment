@@ -1,0 +1,199 @@
+#python code for naver news crawling
+
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+
+document=[]
+
+
+for page in range(20):
+    raw = requests.get('https://search.naver.com/search.naver?&where=news&query=카카오게임즈&start=' + str(page * 10 + 1), headers={'User-Agent': 'Mozilla/5.0'}).text
+    html = BeautifulSoup(raw, 'html.parser')
+    articles = html.select('.type01 > li')
+    
+    for article in articles:
+        title = article.select_one('a._sp_each_title').text
+        journal = article.select_one('span._sp_each_source').text        
+        
+        document.append(title)
+
+data=pd.DataFrame(document)
+data.to_csv('뉴스크롤링결과_kakaoipo.csv', encoding='EUC-KR')
+
+#corpus cleansing
+mport csv
+import ujson
+from konlpy.tag import Komoran
+
+def split_sentences(text):
+    
+    text = text.strip().replace(". ", ".\n").replace("? ", "?\n").replace("! ", "!\n")
+    sentences = text.splitlines()
+    
+    return sentences
+
+def get_pos(analyzer, text):
+    
+    morph_anals = []
+    sentences = split_sentences(text)                       
+    
+    for sentence in sentences:
+        morph_anal = analyzer.pos(sentence)                  
+        morph_anals.append(morph_anal)
+        
+    return morph_anals
+
+def read_text(input_file_name):        
+    
+    
+    key_names = ['news_name', 'review']
+    data = []                        
+
+    with open(input_file_name, "r", encoding="euc-kr", newline="") as input_file:
+        reader = csv.reader(input_file)
+        for row_num, row in enumerate(reader):
+            if row_num == 0:
+                continue
+
+            reviews = {}
+
+            for key_name, val in zip(key_names, row):
+                reviews[key_name] = val
+
+            data.append(reviews)
+
+    return data                 
+
+def pos_review(data):  
+     
+    
+    data_pos = []
+    komoran = Komoran()
+    
+    for reviews in data:
+
+        body = reviews["review"]                        
+        review_pos = get_pos(komoran, body)             
+          
+        reviews["review_pos"] = review_pos              
+        data_pos.append(reviews)
+
+    return data_pos                                       
+
+
+def write_pos_review(output_file_name, data_pos):       
+    
+    
+    with open(output_file_name, "w", encoding="euc-kr") as output_file:
+        for review_pos in data_pos:
+            review_str = ujson.dumps(review_pos, ensure_ascii=False)
+            print(review_str, file=output_file)
+
+            
+def main(): 
+    
+    input_file_name = r"뉴스크롤링결과_kakaoipo.csv"
+    output_file_name = r"textdata.json"
+    
+    data = read_text(input_file_name)                                             
+    data_pos = pos_review(data)                                           
+    write_pos_review(output_file_name, data_pos)                          
+            
+main()
+
+from operator import itemgetter
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
+import ujson
+
+
+FEATURE_POS = ["NNG","NNP","VV","VA","MAG"]
+POS_KEY = "review_pos"
+
+
+def read_documents(input_file_name):
+    
+    documents = []
+
+    with open(input_file_name, "r", encoding="euc-kr") as input_file:
+        for line in input_file:
+            json_obj = ujson.loads(line)
+            text_pos = json_obj[POS_KEY]
+            
+            words = []
+            
+            for sent_pos in text_pos:
+                for word, pos in sent_pos:
+                    if pos not in FEATURE_POS:
+                        continue
+
+                    words.append(word)
+
+            document = " ".join(words)
+            documents.append(document)
+    
+
+    documents = np.asarray(documents)
+        
+    return documents
+
+# main
+
+input_file_name = r"textdata.json"
+output_file_name = "tfidf_pos_textdata.txt"
+documents = read_documents(input_file_name)
+
+
+my_stop_words=["카카오게임즈","카카오","코스닥","시","배","더","파","웃","되","주","게임"]
+
+vectorizer_tfidf = TfidfVectorizer(tokenizer=str.split, max_features =80, stop_words=my_stop_words)
+
+doc_term_mat = vectorizer_tfidf.fit_transform(documents)   
+    
+count = vectorizer_tfidf.fit_transform(documents).toarray().sum(axis=0)    
+idx = np.argsort(-count)
+count = count[idx]
+feature_name_tfidf = np.array(vectorizer_tfidf.get_feature_names())[idx]
+    
+with open(output_file_name, "w", encoding="euc-kr") as output_file:
+    doc_num = len(doc_term_mat.toarray())
+    for i in range(doc_num):                            
+        for j in doc_term_mat[i]:
+            for i1, j in zip(j.indices, j.data):
+                print("{}\t{}\t{}".format(i, vectorizer_tfidf.get_feature_names()[i1], j), file = output_file)
+
+
+#word cloud
+%matplotlib inline
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+import numpy as np
+from PIL import Image
+
+
+def draw_wordcloud(keywords):
+    
+    wordcloud=WordCloud()
+    font_path='C:\Windows\\Fonts\\H2HDRM.ttf'
+    
+    wordcloud=WordCloud(font_path=font_path, width=1200, height=800,background_color="white")
+    wordcloud=wordcloud.generate_from_frequencies(keywords)
+    
+    fig=plt.figure(figsize=(12,9))       
+    plt.imshow(wordcloud)
+    plt.axis("off") 
+    plt.show()
+    
+    fig.savefig('FinalData_wordcloud_tfidf.png')
+
+# main 
+
+keywords={}
+
+for word, freq in zip(feature_name_tfidf, count):
+    keywords[word]=freq
+
+    
+draw_wordcloud(keywords)
+
